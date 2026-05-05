@@ -465,6 +465,10 @@ def _format_failures(failures: list[tuple[str, str]]) -> str:
     return " / ".join(f"{method}: {detail}" for method, detail in failures[-5:])
 
 
+def format_ms(value: float) -> str:
+    return "{:+.3f} ms".format(value)
+
+
 def write_log(
     url: str,
     fired_at: datetime,
@@ -689,14 +693,18 @@ def countdown_and_open(
 
     target_diff_ms = (fired_at - target_at).total_seconds() * 1000
     dispatch_diff_ms = (fired_at - dispatch_at).total_seconds() * 1000
+    target_diff_text = format_ms(target_diff_ms)
+    dispatch_diff_text = format_ms(dispatch_diff_ms)
+    ntp_offset_text = format_ms(ntp.offset * 1000)
+
     separator = "-" * 48
     print("\n" + separator)
     print("  販売予定時刻 :", target_at.strftime("%H:%M:%S.%f"))
     print("  URL投入予定  :", dispatch_at.strftime("%H:%M:%S.%f"))
     print("  実際の投入   :", fired_at.strftime("%H:%M:%S.%f"))
-    print("  販売予定との差:", "{:+.3f} ms".format(target_diff_ms))
-    print("  URL投入誤差  :", "{:+.3f} ms".format(dispatch_diff_ms))
-    print("  NTP補正値    :", "{:+.3f} ms".format(ntp.offset * 1000))
+    print("  販売予定との差:", target_diff_text)
+    print("  URL投入誤差  :", dispatch_diff_text)
+    print("  NTP補正値    :", ntp_offset_text)
     print("  ブラウザ方式 :", browser_result.method)
     print("  ログ保存先   :", LOG_FILE)
     print(separator)
