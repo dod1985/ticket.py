@@ -9,10 +9,10 @@ ticket_opener_v2.py
 
 改善点:
   1. NTPを複数回サンプリングし、RTTが最小の補正値を採用
-  2. Chromeを直接起動（webbrowser非依存を優先）
+  2. Pydroid3で相性が良い webbrowser.open を標準の起動方法に採用
   3. 対象URLへ事前アクセスせず、ブラウザのみ事前ウォームアップ
   4. Termux wake lock が使える場合は利用し、使えない場合も待機ループを維持
-  5. Android/Termux/PC/標準webbrowserの順にフォールバック
+  5. 必要に応じてAndroid/Termux/PC起動へフォールバック
   6. 翌日跨ぎ、起動オフセット、失敗理由ログに対応
 
 使用方法:
@@ -67,6 +67,11 @@ CHROME_PATHS_PC = [
     "/usr/bin/chromium-browser",
     "/usr/bin/chromium",
 ]
+
+# ブラウザ起動順。
+# pydroid_webbrowser_first: Pydroid3向け。webbrowser.openを最初に使う。
+# android_direct_first: am startでChrome/Intentを先に試す。
+BROWSER_OPEN_MODE = "pydroid_webbrowser_first"
 
 # 最後だけビジーループする範囲。長くしすぎると端末負荷が上がります。
 BUSY_WAIT_WINDOW_SEC = 0.015
@@ -295,9 +300,10 @@ def open_with_chrome_pc(url: str, failures: list[tuple[str, str]]) -> str | None
     return None
 
 
-def open_with_webbrowser(url: str, failures: list[tuple[str, str]]) -> str:
+def open_with_webbrowser(url: str, failures: list[tuple[str, str]]) -> str | None:
     """
-    最終フォールバックとしてPython標準のwebbrowserを使う。
+    Python標準のwebbrowserを使う。
+    Pydroid3では、この方法がAndroid側のブラウザ起動に最も安定する場合がある。
     """
     import webbrowser
 
@@ -308,12 +314,59 @@ def open_with_webbrowser(url: str, failures: list[tuple[str, str]]) -> str:
         failures.append((method, f"{type(exc).__name__}: {exc}"))
     else:
         if opened:
-            print("[ブラウザ] webbrowser.open() で起動しました（精度低下の可能性あり）")
+            print("[ブラウザ] webbrowser.open() でブラウザへURLを渡しました")
             return method
         failures.append((method, "webbrowser.open returned False"))
 
-    print("[ブラウザ] 起動コマンドをすべて試しましたが、成功を確認できませんでした")
-    return "failed"
+    return None
+
+
+def open_url_android_direct_first(url: str, failures: list[tuple[str, str]]) -> str | None:
+    """
+    Androidのam startを優先する起動順。
+    am startが使える環境では速い可能性があるが、Pydroid3では失敗する端末もある。
+    """
+    method = open_with_chrome_android(url, failures)
+    if method is not None:
+        return method
+
+    method = open_with_intent_android(url, failures)
+    if method is not None:
+        return method
+
+    method = open_with_termux_open(url, failures)
+    if method is not None:
+        return method
+
+    method = open_with_chrome_pc(url, failures)
+    if method is not None:
+        return method
+
+    return open_with_webbrowser(url, failures)
+
+
+def open_url_pydroid_webbrowser_first(url: str, failures: list[tuple[str, str]]) -> str | None:
+    """
+    Pydroid3向けの起動順。
+    失敗しやすいam startを待たず、まずwebbrowser.openで既定ブラウザへ渡す。
+    """
+    method = open_with_webbrowser(url, failures)
+    if method is not None:
+        return method
+
+    method = open_with_termux_open(url, failures)
+    if method is not None:
+        return method
+
+    method = open_with_chrome_android(url, failures)
+    if method is not None:
+        return method
+
+    method = open_with_intent_android(url, failures)
+    if method is not None:
+        return method
+
+    return open_with_chrome_pc(url, failures)
 
 
 def open_url(url: str) -> BrowserOpenResult:
@@ -322,23 +375,18 @@ def open_url(url: str) -> BrowserOpenResult:
     """
     failures: list[tuple[str, str]] = []
 
-    method = open_with_chrome_android(url, failures)
-    if method is not None:
-        return BrowserOpenResult(method=method, failures=failures)
+    if BROWSER_OPEN_MODE == "pydroid_webbrowser_first":
+        method = open_url_pydroid_webbrowser_first(url, failures)
+    elif BROWSER_OPEN_MODE == "android_direct_first":
+        method = open_url_android_direct_first(url, failures)
+    else:
+        failures.append(("browser mode", f"unknown mode: {BROWSER_OPEN_MODE}"))
+        method = open_url_pydroid_webbrowser_first(url, failures)
 
-    method = open_with_intent_android(url, failures)
-    if method is not None:
-        return BrowserOpenResult(method=method, failures=failures)
+    if method is None:
+        print("[ブラウザ] 起動コマンドをすべて試しましたが、成功を確認できませんでした")
+        method = "failed"
 
-    method = open_with_termux_open(url, failures)
-    if method is not None:
-        return BrowserOpenResult(method=method, failures=failures)
-
-    method = open_with_chrome_pc(url, failures)
-    if method is not None:
-        return BrowserOpenResult(method=method, failures=failures)
-
-    method = open_with_webbrowser(url, failures)
     return BrowserOpenResult(method=method, failures=failures)
 
 
