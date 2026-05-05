@@ -689,16 +689,17 @@ def countdown_and_open(
 
     target_diff_ms = (fired_at - target_at).total_seconds() * 1000
     dispatch_diff_ms = (fired_at - dispatch_at).total_seconds() * 1000
-    print(f"\n{'-' * 48}")
-    print(f"  販売予定時刻 : {target_at.strftime('%H:%M:%S.%f')}")
-    print(f"  URL投入予定  : {dispatch_at.strftime('%H:%M:%S.%f')}")
-    print(f"  実際の投入   : {fired_at.strftime('%H:%M:%S.%f')}")
-    print(f"  販売予定との差: {target_diff_ms:+.3f} ms")
-    print(f"  URL投入誤差  : {dispatch_diff_ms:+.3f} ms")
-    print(f"  NTP補正値    : {ntp.offset * 1000:+.3f} ms")
-    print(f"  ブラウザ方式 : {browser_result.method}")
-    print(f"  ログ保存先   : {LOG_FILE}")
-    print(f"{'-' * 48}")
+    separator = "-" * 48
+    print("\n" + separator)
+    print("  販売予定時刻 :", target_at.strftime("%H:%M:%S.%f"))
+    print("  URL投入予定  :", dispatch_at.strftime("%H:%M:%S.%f"))
+    print("  実際の投入   :", fired_at.strftime("%H:%M:%S.%f"))
+    print("  販売予定との差:", "{:+.3f} ms".format(target_diff_ms))
+    print("  URL投入誤差  :", "{:+.3f} ms".format(dispatch_diff_ms))
+    print("  NTP補正値    :", "{:+.3f} ms".format(ntp.offset * 1000))
+    print("  ブラウザ方式 :", browser_result.method)
+    print("  ログ保存先   :", LOG_FILE)
+    print(separator)
 
 
 # ========================================================
