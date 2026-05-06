@@ -19,6 +19,8 @@ ticket_opener_v2.py
   python ticket_opener_v2.py
 """
 
+from __future__ import annotations
+
 import os
 import socket
 import struct
@@ -76,6 +78,10 @@ BROWSER_OPEN_MODE = "pydroid_webbrowser_first"
 # 最後だけビジーループする範囲。長くしすぎると端末負荷が上がります。
 BUSY_WAIT_WINDOW_SEC = 0.015
 
+# 本番URL投入まで十分な余裕がある場合だけウォームアップする。
+# 近すぎる場合は about:blank 起動と本番URL投入の競合を避ける。
+WARMUP_MIN_REMAINING_SEC = 3.0
+
 # URL投入オフセット（ms）。
 # 0.0: 指定時刻ちょうど。正の値: 指定時刻後に遅らせる。負の値: 指定時刻前に投入。
 DEFAULT_DISPATCH_OFFSET_MS = 0.0
@@ -104,7 +110,10 @@ class BrowserOpenResult(NamedTuple):
 # NTP 時刻補正
 # ========================================================
 
-def get_ntp_sample(server: str, timeout: float = NTP_TIMEOUT_SEC) -> NtpSample | None:
+def get_ntp_sample(
+    server: str,
+    timeout: float = NTP_TIMEOUT_SEC,
+) -> NtpSample | None:
     """
     NTPサーバーに問い合わせてローカル時刻とのオフセット（秒）とRTTを返す。
     取得失敗時は None を返す。
@@ -129,7 +138,11 @@ def get_ntp_sample(server: str, timeout: float = NTP_TIMEOUT_SEC) -> NtpSample |
 
         # ラウンドトリップ中央点をローカル時刻として使う
         t_local = (t_send + t_recv) / 2
-        return NtpSample(server=server, offset=t_server - t_local, rtt=t_recv - t_send)
+        return NtpSample(
+            server=server,
+            offset=t_server - t_local,
+            rtt=t_recv - t_send,
+        )
 
     except Exception:
         return None
@@ -203,7 +216,12 @@ def _run_command(
     timeout: float = 3.0,
 ) -> bool:
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
     except Exception as exc:
         failures.append((method_name, f"{type(exc).__name__}: {exc}"))
         return False
@@ -478,11 +496,14 @@ def write_log(
     dispatch_offset_ms: float,
     browser_result: BrowserOpenResult,
 ):
-    if not os.path.exists(LOG_DIR):
-        os.makedirs(LOG_DIR)
-
     target_diff_ms = (fired_at - target_at).total_seconds() * 1000
     dispatch_diff_ms = (fired_at - dispatch_at).total_seconds() * 1000
+    ntp_text = (
+        f"NTP={ntp.server},"
+        f"補正={ntp.offset * 1000:+.3f}ms,"
+        f"RTT={ntp.rtt * 1000:.3f}ms,"
+        f"samples={ntp.sample_count}"
+    )
     line = (
         f"[{fired_at.strftime('%Y-%m-%d %H:%M:%S.%f')}] "
         f"URL={url} | "
@@ -491,12 +512,20 @@ def write_log(
         f"販売予定との差={target_diff_ms:+.3f}ms | "
         f"URL投入誤差={dispatch_diff_ms:+.3f}ms | "
         f"投入オフセット={dispatch_offset_ms:+.3f}ms | "
-        f"NTP={ntp.server},補正={ntp.offset * 1000:+.3f}ms,RTT={ntp.rtt * 1000:.3f}ms,samples={ntp.sample_count} | "
+        f"{ntp_text} | "
         f"ブラウザ={browser_result.method} | "
         f"失敗履歴={_format_failures(browser_result.failures)}\n"
     )
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(line)
+    try:
+        if not os.path.exists(LOG_DIR):
+            os.makedirs(LOG_DIR)
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(line)
+    except OSError as exc:
+        print(f"[ログ] 保存に失敗しました: {exc}")
+        print(f"[ログ] 内容: {line.strip()}")
+        return
+
     print(f"[ログ] {line.strip()}")
 
 
@@ -640,8 +669,12 @@ def countdown_and_open(
     )
     awake_thread.start()
 
-    warm_thread = threading.Thread(target=warm_up, daemon=True)
-    warm_thread.start()
+    remaining_for_warmup = (dispatch_at - now_corrected(ntp.offset)).total_seconds()
+    if remaining_for_warmup >= WARMUP_MIN_REMAINING_SEC:
+        warm_thread = threading.Thread(target=warm_up, daemon=True)
+        warm_thread.start()
+    else:
+        print("[ウォームアップ] URL投入時刻が近いためスキップします。")
 
     print("\n[待機中] カウントダウン開始... （省電力OFF・画面ON推奨）\n")
 
